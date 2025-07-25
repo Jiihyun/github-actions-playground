@@ -1,30 +1,56 @@
-name: CI/CD Simple Pipeline
+name: deploy
 
-# 어떤 이벤트가 발생했을 때 workflow를 실행할 것인지
-# 여기서는 main 브랜치에 push가 발생했을 때 workflow(jobs)를 실행하도록 설정
-# 하나의 Workflow는 1개 이상의 Job으로 구성됨
-# 여러 Job은 병렬적으로 수행됨
 on:
   push:
     branches:
       - main
 
 jobs:
-  # 작업 이름(id)(사용자 마음대로)
-  a:
-    # 어떤 환경에서 실행할 것인지(gh actions에서 제공하는 컴퓨터)
+  Deploy:
     runs-on: ubuntu-latest
-
-    # 하나의 작업에서 실행할 여러 step들을 정의(같은 instance에서 실행)
-    # 하나의 job을 구성하는 가장 작은 단위
     steps:
-      # 처음에 job이 실행되면 instance가 켜짐 (아무것도 없는 빈 컴퓨터) -> 현재 repo를 git clone으로 코드 가져오기, branch checkout 등이 필요한데 이걸 actions/checkout@v4가 해줌
-      - name: 명령어 실행
-        run: |
-          echo "Hello World"
-          echo $GITHUB_SHA
-          echo $GITHUB_REPOSITORY
+      - name: 레포내 파일 불러오기
+        uses: actions/checkout@v4
 
-      - name: 시크릿 값
-        run : |
-          echo ${{secrets.SECRET_KEY}}
+      - name: JDK 17버전 설치
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: application.yml 파일 생성
+        run: echo "${{secrets.APPLICATION_PROPERTIES}}" > ./src/main/resources/dev-secret.yml
+
+      - name: 테스트 및 빌드
+        run: ./gradlew clean build
+
+      - name: 빌드된 파일 이름 변경
+        run: mv ./build/libs/*SNAPSHOT.jar ./project.jar
+
+      - name: SCP로 EC2에 빌드된 파일 전송하기
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{secrets.EC2_HOST}}
+          username:  ${{secrets.EC2_USERNAME}}
+          key: ${{secrets.EC2_PRIVATE_KEY}}
+          source: project.jar
+          target: /home/ubuntu/aa-server/tobe
+
+      - name: SSH(원격 접속)로 EC2 접속하기
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{secrets.EC2_HOST}}
+          username: ${{secrets.EC2_USERNAME}}
+          key: ${{secrets.EC2_PRIVATE_KEY}}
+          script_stop: true
+          script: |
+            rm -rf /home/ubuntu/aa-server/current
+            mkdir /home/ubuntu/aa-server/current
+            mv /home/ubuntu/aa-server/tobe/project.jar /home/ubuntu/aa-server/current
+            cd /home/ubuntu/aa-server/current
+            sudo fuser -k -n tcp 8080 || true
+            nohub java -jar project.jar > /output.log 2>&1 &
+            rm -rf /home/ubuntu/aa-server/tobe
+
+            
+            
