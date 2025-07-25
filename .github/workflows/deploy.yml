@@ -24,3 +24,7 @@ jobs:
           echo "Hello World"
           echo $GITHUB_SHA
           echo $GITHUB_REPOSITORY
+
+      - name: 시크릿 값
+        run : |
+          echo ${{secrets.SECRET_KEY}}
